@@ -52,7 +52,7 @@ export default function GenealogyGraph() {
         .join("circle")
         .attr("r", 15)
         .attr("fill", (d) => d.group === 1 ? '#e11d48' : '#0ea5e9')
-        .call(d3.drag<SVGCircleElement, unknown>()
+        .call(d3.drag<any, any>()
             .on("start", (e, d: any) => {
               if (!e.active) simulation.alphaTarget(0.3).restart();
               d.fx = d.x;
