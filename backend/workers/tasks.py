@@ -17,33 +17,67 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
-@celery_app.task(bind=True)
-def process_video_pipeline(self, task_id: str, file_path: str):
+def execute_pipeline(task_id: str, file_path: str, display_name: str = None) -> dict:
     """
-    Simulates the long-running process of handling video files.
-    - Extract Audio via FFmpeg
-    - STT via Whisper
-    - Keyframe Semantic via Gemini Pro Vision
-    - Embedding to Pinecone
+    Executes the 3-Step Foresight Agent Pipeline:
+    1. Transcribe video, photo, or text into structured JSON format.
+    2. Query the live open internet (News agencies, Fact-Checkers, Wikipedia) to compare and verify.
+    3. Return whether the video/information is TRUE or FALSE, whether an extraordinary miracle occurred,
+       and provide multi-agent dialectical debate and narrative forensics.
     """
-    print(f"[{task_id}] Process video started for {file_path}")
-    
-    # 1. Pipeline Execution
-    from services.video_pipeline import pipeline
-    transcript = pipeline.transcribe_audio(file_path)
-    visuals = pipeline.describe_visuals([file_path])
-    
-    # 2. Gather Context
-    from services.mcp_client import mcp_client
-    import asyncio
-    context = asyncio.run(mcp_client.fetch_context(["keywords"]))
-    combined_context = [f"Transcript: {transcript}", f"Visuals: {visuals}"] + context["google_search"]
+    filename = display_name or os.path.basename(file_path)
+    print(f"[{task_id}] Step 1: Transcribing '{filename}' into structured JSON format...")
 
-    # 3. Execute Dialectical Engine
+    # Step 1: Transcribe Media into JSON format
+    from services.media_transcriber import media_transcriber
+    transcription_json = media_transcriber.transcribe(file_path)
+
+    transcript = transcription_json.get("transcript_or_text", "")
+    extracted_claims = transcription_json.get("extracted_claims", [])
+
+    print(f"[{task_id}] Step 2: Connecting to the live internet for factual verification...")
+    # Step 2: Connect to the live internet to verify claims
+    from services.web_verifier import web_verifier
+    truth_verification = web_verifier.cross_check_claims(transcription_json)
+
+    # Compile context sources from live web results for the Agent Triad
+    web_sources = truth_verification.get("evidence_sources", [])
+    combined_context = [
+        f"Transcript/Content: {transcript}",
+        f"Truth Verification: {truth_verification.get('verdict')}",
+        f"Factual Explanation: {truth_verification.get('explanation')}"
+    ]
+    for src in web_sources:
+        combined_context.append(f"Source [{src['publisher']}]: {src['title']} - {src['snippet']} ({src['link']})")
+
+    print(f"[{task_id}] Step 3: Synthesizing multi-agent debate, forensics, and predictive models...")
+    # Step 3: Dialectical Debate, Forensics, and Predictive Engines
     from agents.debate_orchestrator import DebateOrchestrator
     orchestrator = DebateOrchestrator()
-    summary = orchestrator.run_debate("Video Analysis", combined_context)
-    
-    # In production: Emits to WebSockets via Redis PUB/SUB or API callback
-    print(f"[{task_id}] Done. Synthesis complete.")
-    return {"status": "success", "task_id": task_id}
+    summary = orchestrator.run_debate(filename, combined_context)
+
+    from agents.forensics_and_prediction import ForensicsEngine, PredictiveEngine
+    forensics = ForensicsEngine().run_genealogy(filename)
+    predictions = PredictiveEngine().run_forecast(filename)
+
+    summary_dict = summary.model_dump() if hasattr(summary, "model_dump") else summary.dict()
+
+    result = {
+        "task_id": task_id,
+        "filename": filename,
+        "status": "completed",
+        "transcription_json": transcription_json,
+        "truth_verification": truth_verification,
+        "debate": summary_dict,
+        "forensics": forensics,
+        "predictions": predictions,
+        "transcript": transcript,
+        "visuals": transcription_json.get("media_type", "general_media")
+    }
+
+    print(f"[{task_id}] Complete. Factual verdict: {truth_verification.get('verdict_badge')} for '{filename}'.")
+    return result
+
+@celery_app.task(bind=True)
+def process_video_pipeline(self, task_id: str, file_path: str, display_name: str = None):
+    return execute_pipeline(task_id, file_path, display_name)
